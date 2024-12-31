@@ -1,0 +1,635 @@
+rm(list = ls())
+#加载包
+.libPaths("E:/R/library")
+library(Seurat)
+library(dplyr)
+library(patchwork)
+library(ggplot2)
+library(SingleCellExperiment)
+library(scran)
+library(hdf5r)
+library(Matrix)
+library(Seurat)
+
+
+# 打开 H5 文件
+h5_file <- H5File$new("BCC_GSE123813_aPD1_expression.h5", mode = "r")
+
+# 查看 matrix 组中的所有子数据集
+matrix_group <- h5_file[["matrix"]]
+matrix_group$ls()
+
+# 读取相关数据集
+barcodes <- matrix_group[["barcodes"]]$read()   # 读取细胞名
+data <- matrix_group[["data"]]$read()           # 读取表达矩阵
+indices <- matrix_group[["indices"]]$read()     # 读取索引
+indptr <- matrix_group[["indptr"]]$read()       # 读取指针
+shape <- matrix_group[["shape"]]$read()         # 读取矩阵形状
+
+# 查看 features 组中的内容
+features_group <- matrix_group[["features"]]
+features_group$ls()  # 列出 features 组中的数据集
+
+# 假设 features 组中包含基因名称的子数据集 "names"
+gene_names <- features_group[["name"]]$read()  # 读取基因名称
+
+# 读取基因名称和细胞名称
+#gene_names <- features_group[["name"]]$read()   # 读取基因名
+barcodes <- matrix_group[["barcodes"]]$read()   # 读取细胞名
+
+# 构建稀疏矩阵（CSR 格式）
+library(Matrix)
+expression_matrix <- sparseMatrix(
+  i = indices + 1,  # R中的索引从1开始
+  p = indptr,
+  x = data,
+  dims = shape
+)
+
+# 为表达矩阵分配行名（基因名）和列名（细胞名）
+rownames(expression_matrix) <- gene_names
+colnames(expression_matrix) <- barcodes
+
+# 创建 Seurat 对象
+library(Seurat)
+seurat_object <- CreateSeuratObject(counts = expression_matrix)
+
+# 查看 Seurat 对象的摘要信息
+print(seurat_object)
+
+# 读取 metadata 文件（假设文件是制表符分隔的）
+metadata <- read.table("BCC_GSE123813_aPD1_CellMetainfo_table.TSV", header = TRUE, sep = "\t", row.names = 1)
+
+
+# 查看 Seurat 对象中的细胞名称
+head(Cells(seurat_object))
+
+# 查看 metadata 中的行名
+head(rownames(metadata))
+
+# 检查两者是否一致
+if (!all(rownames(metadata) %in% Cells(seurat_object))) {
+  stop("metadata 中的细胞名称和 Seurat 对象中的细胞名称不匹配，请检查数据。")
+}
+
+# 将 metadata 信息添加到 Seurat 对象中
+seurat_object <- AddMetaData(seurat_object, metadata = metadata)
+
+# 查看 Seurat 对象的 metadata
+head(seurat_object@meta.data)
+
+View(seurat_object)
+
+
+# 保存 Seurat 对象为 .rds 文件
+saveRDS(seurat_object, file = "BCC_GSE123813_aPD1_SeuratObject.rds")
+
+
+#删除metadata
+# 创建一个与原始细胞数量一致的空 data.frame
+empty_meta <- data.frame(row.names = Cells(seurat_object))
+
+# 将 meta.data 重置为空的 data.frame
+seurat_object@meta.data <- empty_meta
+
+# 查看 Seurat 对象的新 meta.data
+head(seurat_object@meta.data)
+
+# 移除 UMAP 列
+metadata_clean <- metadata[, !(names(metadata) %in% c("UMAP_1", "UMAP_2"))]
+
+# 将清理后的 metadata 添加到 Seurat 对象中
+seurat_object <- AddMetaData(seurat_object, metadata = metadata_clean)
+
+#重新保存
+# 保存 Seurat 对象为 .rds 文件
+saveRDS(seurat_object, file = "THCA_GSE148673_SeuratObject.rds")
+
+
+# 加载 Seurat 包
+library(Seurat)
+
+# 读取所有 Seurat 对象
+BRCA <- readRDS("BRCA_GSE110686_CD4Tconv_Tumor.rds")
+CRC <- readRDS("CRC_GSE146771_CD4Tconv_Tumor.rds")
+Glioma <- readRDS("Glioma_GSE163108_CD4Tconv_Tumor.rds")
+KIRC <- readRDS("KIRC_GSE139555_CD4Tconv_Tumor.rds")
+LIHC <- readRDS("LIHC_GSE140228_10X_CD4Tconv_Tumor.rds")
+NSCLC <- readRDS("NSCLC_GSE117570_CD4Tconv_Tumor.rds")
+OS <- readRDS("OS_GSE162454_CD4Tconv_Tumor.rds")
+SKCM <- readRDS("SKCM_GSE123139_CD4Tconv_Tumor.rds")
+
+
+
+
+
+
+# 为每个对象的 metadata 添加癌种信息
+BRCA$CancerType <- "BRCA"
+CRC$CancerType <- "CRC"
+Glioma$CancerType <- "Glioma"
+KIRC$CancerType <- "KIRC"
+LIHC$CancerType <- "LIHC"
+NSCLC$CancerType <- "NSCLC"
+OS$CancerType <- "OS"
+SKCM$CancerType <- "SKCM"
+
+# 合并所有 Seurat 对象
+combined_seurat <- merge(BRCA, y = c(CRC, Glioma, KIRC, LIHC, NSCLC, OS, SKCM), add.cell.ids = c("BRCA", "CRC", "Glioma", "KIRC", "LIHC", "NSCLC", "OS", "SKCM"))
+
+# 检查合并后的对象
+print(combined_seurat)
+
+seurat_object <- combined_seurat
+
+# 保存合并后的 Seurat 对象
+saveRDS(seurat_object, file = "pan_cancer_seurat_object.rds")
+
+
+
+library(Seurat)
+library(harmony)
+
+# Load Seurat objects
+BRCA <- readRDS("BRCA_GSE110686_CD4Tconv_Tumor.rds")
+CRC <- readRDS("CRC_GSE146771_CD4Tconv_Tumor.rds")
+Glioma <- readRDS("Glioma_GSE163108_CD4Tconv_Tumor.rds")
+KIRC <- readRDS("KIRC_GSE139555_CD4Tconv_Tumor.rds")
+LIHC_98638 <- readRDS("LIHC_GSE98638_CD4Tconv_Tumor.rds")
+LIHC_140228 <- readRDS("LIHC_GSE140228_10X_CD4Tconv_Tumor.rds")
+NSCLC_117570 <- readRDS("NSCLC_GSE117570_CD4Tconv_Tumor.rds")
+NSCLC_127465 <- readRDS("NSCLC_GSE127465_CD4Tconv_Tumor.rds")
+OS <- readRDS("OS_GSE162454_CD4Tconv_Tumor.rds")
+SKCM <- readRDS("SKCM_GSE123139_CD4Tconv_Tumor.rds")
+THCA <- readRDS("THCA_GSE148673_CD4Tconv_Tumor.rds")
+UCEC <- readRDS("UCEC_GSE139555_CD4Tconv_Tumor.rds")
+
+# 为每个 Seurat 对象添加癌种信息
+BRCA$CancerType <- "BRCA"
+CRC$CancerType <- "CRC"
+Glioma$CancerType <- "Glioma"
+KIRC$CancerType <- "KIRC"
+LIHC_98638$CancerType <- "LIHC"
+LIHC_140228$CancerType <- "LIHC"
+NSCLC_117570$CancerType <- "NSCLC"
+NSCLC_127465$CancerType <- "NSCLC"
+OS$CancerType <- "OS"
+SKCM$CancerType <- "SKCM"
+THCA$CancerType <- "THCA"
+UCEC$CancerType <- "UCEC"
+
+# 为每个 Seurat 对象添加癌种信息
+BRCA$Cancer <- "BRCA"
+CRC$Cancer <- "CRC"
+Glioma$Cancer <- "Glioma"
+KIRC$Cancer <- "KIRC"
+LIHC_98638$Cancer <- "LIHC98638"
+LIHC_140228$Cancer <- "LIHC140228"
+NSCLC_117570$Cancer <- "NSCLC117570"
+NSCLC_127465$Cancer <- "NSCLC127465"
+OS$Cancer <- "OS"
+SKCM$Cancer <- "SKCM"
+THCA$Cancer <- "THCA"
+UCEC$Cancer <- "UCEC"
+
+# Merge Seurat objects into one
+seurat_list <- list(BRCA, CRC, Glioma, KIRC, LIHC_98638, LIHC_140228, NSCLC_117570, 
+                    NSCLC_127465, OS, SKCM, THCA, UCEC)
+
+seurat_object <- merge(x = seurat_list[[1]], y = seurat_list[2:length(seurat_list)], 
+                       add.cell.ids = c("BRCA", "CRC", "Glioma", "KIRC", "LIHC_98638", "LIHC_140228", 
+                                        "NSCLC_117570", "NSCLC_127465", "OS", "SKCM", "THCA", "UCEC"))
+
+# Normalize data and find variable features
+merged_seurat <- NormalizeData(merged_seurat)
+merged_seurat <- FindVariableFeatures(merged_seurat, selection.method = "vst", nfeatures = 2000)
+
+# Scale data and run PCA
+merged_seurat <- ScaleData(merged_seurat)
+merged_seurat <- RunPCA(merged_seurat, features = VariableFeatures(object = merged_seurat))
+
+# Perform batch effect correction using Harmony
+merged_seurat <- RunHarmony(object = merged_seurat, group.by.vars = "orig.ident")
+
+# UMAP visualization after Harmony batch correction
+merged_seurat <- RunUMAP(merged_seurat, reduction = "harmony", dims = 1:20)
+DimPlot(merged_seurat, reduction = "umap", group.by = "orig.ident")
+
+
+# 加载 Seurat 对象
+seurat_object <- readRDS("seurat_object_CD4Tcon_combined_clean.rds")
+# 数据标准化
+seurat_object <- NormalizeData(seurat_object, normalization.method = "LogNormalize", scale.factor = 10000)
+# 找到在细胞之间变异最大的基因
+seurat_object <- FindVariableFeatures(seurat_object, selection.method = "vst", nfeatures = 2000)
+
+# 识别最具变异性的基因
+top10 <- head(VariableFeatures(seurat_object), 10)
+# 对所有基因进行数据缩放
+seurat_object <- ScaleData(seurat_object, features = rownames(seurat_object))
+# 执行 PCA 降维
+seurat_object <- RunPCA(seurat_object, features = VariableFeatures(object = seurat_object))
+
+# 查看 PCA 结果
+print(seurat_object[["pca"]], dims = 1:5, nfeatures = 5)
+
+# 可视化 PCA 结果
+VizDimLoadings(seurat_object, dims = 1, reduction = "pca")
+DimPlot(seurat_object, reduction = "pca")
+#决定要使用的主成分数
+ElbowPlot(seurat_object)
+
+# 使用前 10 个主成分（通常通过 ElbowPlot 确定）
+seurat_object <- FindNeighbors(seurat_object, dims = 1:10)
+
+# 设置分辨率，分辨率越高得到的簇越多
+seurat_object <- FindClusters(seurat_object, resolution = 0.6)
+
+# 查看聚类结果
+head(Idents(seurat_object))
+
+# 运行 UMAP
+seurat_object <- RunUMAP(seurat_object, dims = 1:10)
+
+# 绘制 UMAP
+DimPlot(seurat_object, reduction = "umap", label = TRUE)
+
+# 可视化特定基因（如 CD3E）在聚类中的表达情况
+FeaturePlot(seurat_object, features = "CD4")
+
+# 使用小提琴图可视化特定基因的表达
+VlnPlot(seurat_object, features = "CD3E")
+
+library(Seurat)
+
+# 提取 CancerType 的唯一值
+unique_sample_IDs <- unique(seurat_object@meta.data$Cancer)
+
+# 将 Seurat 对象拆分为不同的子集
+seurat_list <- SplitObject(seurat_object, split.by = "Cancer")
+
+# 对每个子集进行标准化并查找高变基因
+for (i in 1:length(seurat_list)) {
+  seurat_list[[i]] <- NormalizeData(seurat_list[[i]], verbose = FALSE)
+  seurat_list[[i]] <- FindVariableFeatures(seurat_list[[i]], selection.method = "vst", nfeatures = 2000, verbose = FALSE)
+}
+
+# 查找整合锚点
+anchors <- FindIntegrationAnchors(object.list = seurat_list, dims = 1:30)
+
+# 整合数据
+seurat_integrated <- IntegrateData(anchorset = anchors, dims = 1:30)
+
+# 对整合后的数据进行标准化
+seurat_integrated <- ScaleData(seurat_integrated, verbose = FALSE)
+
+# 运行 PCA 降维
+seurat_integrated <- RunPCA(seurat_integrated, npcs = 30, verbose = FALSE)
+
+# 使用 UMAP 进行可视化
+seurat_integrated <- RunUMAP(seurat_integrated, reduction = "pca", dims = 1:30)
+
+# 聚类分析
+seurat_integrated <- FindNeighbors(seurat_integrated, dims = 1:30)
+seurat_integrated <- FindClusters(seurat_integrated, resolution = 1.2)
+
+# UMAP 可视化
+DimPlot(seurat_integrated, reduction = "umap", label = TRUE, group.by = "CancerType")
+DimPlot(seurat_integrated, reduction = "umap", label = TRUE)
+seurat_object <- seurat_integrated
+
+# 设置 idents 为 seurat_clusters
+
+seurat_object <- seurat_integrated
+
+Idents(seurat_object) <- "seurat_clusters"
+
+# 生成 DotPlot，查看 BCL9 和 BCL9L 在各个 cluster 中的表达
+p <- DotPlot(seurat_object, features = c('BCL9', 'BCL9L')) + coord_flip()
+# 切换到 RNA assay
+DefaultAssay(seurat_object) <- "RNA"
+# 提取 DotPlot 的数据
+dat <- p$data
+
+# 打印 DotPlot 数据，确认数据结构
+print(head(dat))
+
+# 提取 BCL9 和 BCL9L 的表达值
+BCL9_data <- dat[dat$feature == 'BCL9', ]
+BCL9L_data <- dat[dat$feature == 'BCL9L', ]
+
+# 合并 BCL9 和 BCL9L 的数据，按 cluster 计算综合表达
+combined_data <- merge(BCL9_data, BCL9L_data, by = "id", suffixes = c("_BCL9", "_BCL9L"))
+
+# 计算 BCL9 和 BCL9L 的平均表达
+combined_data$avg_exp_combined <- rowMeans(cbind(combined_data$avg.exp.scaled_BCL9, combined_data$avg.exp.scaled_BCL9L))
+
+# 打印合并后的数据
+print(combined_data)
+
+
+# 设置阈值，划分高低表达（例如，使用 avg_exp_combined > 0 作为阈值）
+high_expression_clusters <- combined_data[combined_data$avg_exp_combined > 0, ]$id
+
+# 根据综合表达结果对细胞进行分组
+seurat_object@meta.data$BCL9_BCL9L_annotation <- ifelse(seurat_object@meta.data$seurat_clusters %in% high_expression_clusters, 'BCL9_BCL9L-HIGH', 'BCL9_BCL9L-LOW')
+
+# 查看更新后的 meta.data
+View(seurat_object@meta.data)
+
+# 可视化高低表达组在UMAP中的分布
+DimPlot(seurat_object, group.by = "BCL9_BCL9L_annotation", reduction = "umap", label = TRUE)
+
+
+saveRDS(seurat_object, file = "seurat_object_CD4Tcon_combined_clean_BCL9_BCL9L_grouped_new.rds")
+
+
+library(Seurat)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(enrichplot)
+
+seurat_object <- seurat_object_CD4Tcon_combined_clean_BCL9_BCL9L_grouped_new
+rm(seurat_object_CD4Tcon_combined_clean_BCL9_BCL9L_grouped_new)
+# 提取分组信息
+Idents(seurat_object) <- seurat_object@meta.data$BCL9_BCL9L_annotation
+
+# 找到高表达和低表达组的差异表达基因 (DEGs)
+deg_results <- FindMarkers(seurat_object, ident.1 = "BCL9_BCL9L-LOW", ident.2 = "BCL9_BCL9L-HIGH", logfc.threshold = 0)
+
+
+# 排序差异表达基因，根据log2 fold change
+gene_list <- deg_results$avg_log2FC
+names(gene_list) <- deg_results$symbol
+
+# 将基因列表按照log2 fold change 降序排列
+gene_list <- sort(gene_list, decreasing = TRUE)
+
+
+# GSEA 基于 GO 数据库
+gsea_results <- gseGO(
+  geneList = gene_list,         # 差异表达基因列表
+  OrgDb = org.Hs.eg.db,         # 基因注释数据库
+  keyType = "SYMBOL",           # 基因名称类型 (这里是 SYMBOL)
+  ont = "ALL",                   # GO category (BP: Biological Process)
+  minGSSize = 10,               # 最小基因集大小
+  maxGSSize = 500,              # 最大基因集大小
+  pvalueCutoff = 0.05,          # p-value 截止值
+  verbose = TRUE
+)
+
+# 打印GSEA结果
+print(head(gsea_results@result))
+
+# 将结果保存为数据框
+gsea_df <- as.data.frame(gsea_results)
+
+# 保存GSEA结果为CSV
+write.csv(gsea_df, file = "GSEA_GO_results.csv", row.names = FALSE)
+
+
+# 绘制GSEA山脊图
+ridgeplot(gsea_results) + labs(title = "GSEA Ridgeplot")
+
+# 绘制顶级通路的富集曲线
+gseaplot2(gsea_results, geneSetID = gsea_results@result$ID[226], title = gsea_results@result$Description[226])
+
+
+# 将 GSEA 富集曲线保存为 PDF 文件
+pdf("gsea_enrichment_curve-GO-Wnt.pdf", width = 7, height = 5)  # 打开 PDF 文件，指定宽度和高度
+gseaplot2(
+  gsea1, 
+  geneSetID = gsea1@result$ID[226], 
+  title = gsea1@result$Description[226]
+)
+dev.off()  # 关闭 PDF 文件设备
+
+
+
+library(clusterProfiler)
+library(org.Hs.eg.db)
+
+# 假设 gene_list 是基因符号
+gene_symbols <- names(gene_list)
+
+# 使用 org.Hs.eg.db 将基因符号转换为 Entrez Gene IDs
+gene_entrez <- bitr(gene_symbols, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
+
+# 确保 gene_list 中的基因名替换为 Entrez Gene IDs
+gene_list_entrez <- gene_list[gene_entrez$SYMBOL]  # 使用符号匹配
+names(gene_list_entrez) <- gene_entrez$ENTREZID    # 替换为 Entrez Gene IDs
+
+# 检查是否正确转换
+head(gene_list_entrez)
+
+# 使用 KEGG 数据库进行 GSEA 分析
+gsea_kegg_results <- gseKEGG(
+  geneList = gene_list_entrez,   # 使用 Entrez Gene ID 的基因列表
+  organism = 'hsa',              # KEGG 物种代码，'hsa' 为人类
+  pvalueCutoff = 0.05,
+  verbose = FALSE
+)
+
+# 打印 KEGG GSEA 结果
+print(head(gsea_kegg_results@result))
+
+# 可视化结果
+gseaplot2(gsea_kegg_results, geneSetID = gsea_kegg_results@result$ID[1], title = gsea_kegg_results@result$Description[1])
+
+# 提取 GSEA 结果
+gsea_kegg_result_df <- as.data.frame(gsea_kegg_results@result)
+
+# 保存为 CSV 文件
+write.csv(gsea_kegg_result_df, file = "gsea_kegg_results.csv", row.names = FALSE)
+
+
+GSEA
+rm(list = ls())
+options(stringsAsFactors = F)
+#加载相关的包
+library(data.table)
+library(clusterProfiler)
+library(dplyr)
+library(org.Hs.eg.db)#加载所需物种基因组注释信息，可有20个物种选择，http://bioconductor.org/packages/release/BiocViews.html#___OrgDb
+library(ggplot2)
+library(enrichplot)
+library(msigdbr)
+library(fgsea)
+library(dplyr)
+library(ggplot2)
+library(Seurat) 
+
+table(Idents(seurat_object))
+
+seurat_object<- SetIdent(seurat_object,value=seurat_object@meta.data[['BCL9_BCL9L_annotation']])
+deg=FindMarkers(seurat_object, ident.1 = 'BCL9_BCL9L-LOW',ident.2 = 'BCL9_BCL9L-HIGH',
+                min.pct = 0.25,   logfc.threshold = 0.01,thresh.use = 0.99)
+#增加差异基因的检测灵敏度
+deg <- FindMarkers(
+  seurat_object, 
+  ident.1 = 'BCL9_BCL9L-LOW', 
+  ident.2 = 'BCL9_BCL9L-HIGH',
+  min.pct = 0.1,               # 包含表达比例较低的基因
+  logfc.threshold = 0.01,      # 包含更小的logFC变化
+  thresh.use = 0.05,            # 更宽松的p值阈值
+  test.use = "MAST"             # 使用 MAST 统计检验
+)
+
+
+# 将差异基因表达结果保存为RDS文件
+saveRDS(deg, file = "deg_results_new.rds")
+
+# 加载保存的差异基因表达结果
+deg <- readRDS("deg_results_new.rds")
+
+
+head(deg)
+deg$symbol <- rownames(deg)
+library(R.utils)
+R.utils::setOption("clusterProfiler.download.method","auto")
+ids=bitr(deg$symbol,'SYMBOL','ENTREZID','org.Hs.eg.db')
+#'select()' returned 1:1 mapping between keys and columns
+#Warning message:
+#In bitr(deg$symbol, "SYMBOL", "ENTREZID", "org.Hs.eg.db") :
+#  3.66% of input gene IDs are fail to map...
+deg=merge(deg,ids,by.x='symbol',by.y='SYMBOL')
+gene <- dplyr::distinct(deg,symbol,.keep_all=TRUE) #此处需区分大小写
+gene_df <- data.frame(logFC=gene$avg_log2FC, symbol = gene$symbol) #记住你的基因表头名字
+gene_df <- merge(gene_df,gene,by="symbol")
+geneList<-gene_df$logFC #第二列可以是folodchange,也可以是logFC
+names(geneList)=gene_df $ENTREZID #使用转换好的ID
+geneList=sort(geneList,decreasing = T) #从高到低排序
+kegmt<-read.gmt("c7.all.v2024.1.Hs.entrez.gmt") #读gmt文件
+gsea1<-GSEA(geneList,TERM2GENE = kegmt) #GSEA分析
+write.csv(gsea1@result,file = 'GSEA-C7-new.csv')
+ridgeplot(gsea1, fill = "pvalue") + scale_fill_continuous(type = "viridis")
+ggsave("GSEA-tumor.pdf", width = 28, height = 25, units = "cm")
+
+
+library(enrichplot)
+gseaplot2(gsea1,520,color="red",pvalue_table = T,title="",base_size=10,ES_geom="line") 
+
+#绘制顶级通路的富集曲线
+gseaplot2(gsea1, geneSetID = gsea1@result$ID[410], title = gsea1@result$Description[410])
+
+
+# 将 GSEA 富集曲线保存为 PDF 文件
+pdf("GSEA-REACTOME_DEGRADATION_OF_BETA_CATENIN_BY_THE_DESTRUCTION_COMPLEX_new.pdf", width = 7, height = 5)  # 打开 PDF 文件，指定宽度和高度
+gseaplot2(
+  gsea1, 
+  geneSetID = gsea1@result$ID[410], 
+  title = gsea1@result$Description[410]
+)
+dev.off()  # 关闭 PDF 文件设备
+
+deg_results <- deg_results_new
+
+# 按 BCL9_BCL9L_annotation 分组，进行差异表达基因分析
+deg_results <- FindMarkers(seurat_object, ident.1 = "BCL9_BCL9L-LOW", ident.2 = "BCL9_BCL9L-HIGH")
+# 选择显著上调的基因 (logFC > 0)
+# 选择显著上调的基因 (avg_log2FC > 0)
+upregulated_genes <- rownames(deg_results[deg_results$avg_log2FC > 0 & deg_results$p_val_adj < 0.05, ])
+
+# 打印上调基因的数量
+print(length(upregulated_genes))
+
+library(clusterProfiler)
+library(org.Hs.eg.db)
+
+go_results <- enrichGO(
+  gene = upregulated_genes,            # 差异上调的基因
+  OrgDb = org.Hs.eg.db,                # 人类基因数据库
+  keyType = "SYMBOL",                  # 基因标识符为基因符号
+  ont = "ALL",                          # 生物过程 (BP)
+  pAdjustMethod = "BH",                # 使用 BH 方法进行 p 值校正
+  pvalueCutoff = 0.05,                 # p 值截止
+  qvalueCutoff = 0.05
+)
+
+# 可视化 GO 富集结果
+dotplot(go_results, showCategory = 20)
+
+
+# 检查 deg_results 数据框的列名
+colnames(deg_results)
+
+
+library(clusterProfiler)
+
+# 使用 barplot() 绘制 GO 富集分析结果
+barplot(go_results, showCategory = 10, title = "GO Enrichment Barplot")
+
+library(enrichplot)
+
+# 绘制网络图
+emapplot(pairwise_termsim(go_results), showCategory = 10)
+
+
+# Load required library
+library(enrichplot)
+
+# Generate and save the network plot
+pdf("GO_Enrichment_Network.pdf", width = 8, height = 8)  # Open a PDF device
+emapplot(pairwise_termsim(go_results), showCategory = 10)  # Create the plot
+dev.off()  # Close the PDF device
+
+
+# 绘制热图
+heatplot(go_results, showCategory = 20)
+
+# 绘制 Cnetplot 图
+cnetplot(go_results, categorySize = "pvalue", foldChange = NULL, showCategory = 20)
+
+# 绘制 Enrichment Pathway 图
+ridgeplot(go_results)
+
+# 绘制多层富集路径图
+upsetplot(go_results)
+
+
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(enrichplot)
+library(ggplot2)
+
+# 确保 gene_list 包含BCL9_BCL9L-LOW 组上调的基因ID（转换为ENTREZ ID）
+upregulated_genes <- rownames(deg_results[deg_results$avg_log2FC < 0 & deg_results$p_val_adj < 0.05, ]) # 假设你已经定义了DEG结果
+
+# 将基因符号转换为ENTREZ ID
+gene_entrez_ids <- bitr(upregulated_genes, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
+
+# 进行 KEGG 富集分析
+kegg_results <- enrichKEGG(
+  gene = gene_entrez_ids$ENTREZID,      # 使用转换后的ENTREZ ID
+  organism = 'hsa',                     # 'hsa' 是人类的 KEGG 代码
+  pAdjustMethod = "BH",                 # 使用 BH 方法校正 p 值
+  pvalueCutoff = 0.05,                  # p 值截止
+  qvalueCutoff = 0.05
+)
+
+# Download the KEGG pathways for human to a file
+kegg_pathways <- read.csv("https://rest.kegg.jp/link/hsa/pathway", sep = "\t", header = FALSE)
+
+# Use the local file for enrichment analysis
+kegg_results <- enrichKEGG(
+  gene = gene_entrez_ids$ENTREZID,
+  organism = 'hsa',
+  keyType = 'kegg',  # KEGG IDs
+  pAdjustMethod = "BH",
+  pvalueCutoff = 0.05,
+  qvalueCutoff = 0.05
+)
+
+
+# 查看 KEGG 富集结果
+head(kegg_results)
+
+barplot(kegg_results, showCategory = 20, title = "Top 10 KEGG Pathways in BCL9_BCL9L-LOW Group")
+
+write.csv(as.data.frame(kegg_results), file = "KEGG_results_BCL9_BCL9L_LOW.csv")
+
+
+
+
+
+

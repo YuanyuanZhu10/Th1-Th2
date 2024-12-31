@@ -1,0 +1,342 @@
+rm(list = ls())
+options(stringsAsFactors = F)
+.libPaths("E:/R/library")
+library(data.table)
+
+library(dplyr)
+
+library(tidyverse)
+library(Seurat)
+ALLdata <- data.table::fread("tcga_RSEM_gene_tpm",data.table = F)
+ALLdata[1:5,1:5]
+clin <- data.table::fread("Survival_SupplementalTable_S1_20171025_xena_sp",data.table = F)
+View(clin)
+clin1 <-clin %>% select(sample,'cancer type abbreviation',gender,ajcc_pathologic_tumor_stage,OS,OS.time) %>% rename(Type='cancer type abbreviation',Stage=ajcc_pathologic_tumor_stage,status=OS,time=OS.time)
+View(clin1)
+gtf=fread("probeMap_gencode.v23.annotation.gene.probemap",header = T, sep = '\t',data.table = F)
+View(gtf)
+gtf <- as.data.frame(gtf)
+save(gtf,file = "gtf.Rdata")
+#colnames(ALLdata)[1]<-'gene_id'
+#ALLdata1<-separate(ALLdata,gene_id,into = c("gene_id"),sep="\\.") 
+#ALLdata1[1:5,1:5]
+#mRNA<-dplyr::filter(gtf,'gene_biotype=="protein_coding")%>%select(gene_name,gene_id,gene_biotype)%>%inner_join(ALLdata1,by ="gene_id")%>%select(-gene_id,-gene_biotype)%>%distinct(gene_name,.keep_all = T)
+#mRNA[1:5,1:5]
+
+mRNA=merge(x=ALLdata,y=gtf,by.y="id",by.x = "sample" )
+View(mRNA)
+library(dplyr)
+
+mRNA_filtered <- mRNA %>%
+  group_by(gene) %>%
+  filter(n() == 1) %>%
+  ungroup()
+View(mRNA_filtered)
+mRNA_filtered <- mRNA_filtered[, 1:(ncol(mRNA_filtered) - 4)]
+mRNA_filtered <- mRNA_filtered[, -1]
+last_column <- mRNA_filtered[, ncol(mRNA_filtered)]
+mRNA_filtered <- mRNA_filtered[, -ncol(mRNA_filtered)]
+mRNA_filtered <- cbind(last_column, mRNA_filtered)
+row.names(mRNA_filtered)<-mRNA_filtered[,1]
+mRNA_filtered<-mRNA_filtered[,-1]
+mRNA_filtered[1:5,1:5]
+save(mRNA_filtered,file = 'pancancer_mRNA.Rdata')
+save(clin1,file = 'pancancer_clin.Rdata')
+
+rm(list = ls())
+load('pancancer_mRNA.Rdata')
+mRNA_filtered<-as.data.frame(t(mRNA_filtered))
+mRNA_filtered[1:5,1:5]
+group_list=ifelse(as.numeric(substr(rownames(mRNA_filtered),14,15)) < 10,'tumor','normal')
+design <- model.matrix(~0+factor(group_list))
+colnames(design)=levels(factor(group_list))
+rownames(design)=rownames(mRNA_filtered)
+head(design)
+class(design)
+design<-as.data.frame(design)
+design$ID<-row.names(design)
+design[1:3,1:3]
+design$tumor[design$tumor==1] <- "Tumor"#1换成Tumor
+design$tumor[design$tumor==0] <- "Normal"#0换成Normal
+design<-design[,-1]#去掉normal这一列
+colnames(design)[1]<-'Type'#cancer这一列列名改为Type
+head(design)
+mRNA_filtered$ID<-row.names(mRNA_filtered)
+mRNA_filtered=inner_join(mRNA_filtered,design,by ="ID",copy=T)
+mRNA_filtered[1:5,1:5]
+mRNA_filtered<-select(mRNA_filtered,ID,Type,everything())
+mRNA_filtered[1:5,1:5]
+load('pancancer_clin.Rdata')
+clin1[1:5,1:5]
+clin1<-rename(clin1,ID=sample,Cancer=Type)
+clin1[1:5,1:5]
+drawdata<-dplyr::inner_join(mRNA_filtered,clin1,by ="ID",copy=T)
+drawdata[1:5,1:5]
+drawdata<-select(drawdata,ID,Cancer,gender,Stage,status,time,everything())
+drawdata[1:5,1:10]
+save(drawdata,file = "pancancer_drawdata.Rdata")
+
+
+#免疫浸润
+#重新开始
+rm(list = ls())
+load('pancancer_mRNA.Rdata')
+#View(mRNA_filtered)
+#加载包
+#library(xCell)
+library(IOBR) #用这个只需要一行代码
+#不用log转换，不能有负值
+#expr_pancancr <- log2(mRNA_filtered+0.1)
+#去掉一些低质量的基因
+#expr_pancancr <- expr_pancancr[apply(expr_pancancr,1,sd)>0.5,]
+#expr_pancancr[1:4,1:4]
+#换个名字
+#expr_pancancr <- mRNA_filtered
+
+#转换回tpm
+a <- 2^mRNA_filtered-0.001
+a[1:4,1:4]
+#a <- mRNA_filtered
+#过滤基因
+exp = a[apply(a, 1, function(x) sum(x > 0) > 0.5*ncol(a)), ] # only keep genes express in half of samples
+dim(exp)
+exp[1:4,1:4]
+View(exp)
+#把负值换成0,以免影响后面计算
+exp[exp < 0] <- 0
+
+library(GSVA)
+exp <- as.matrix(exp)
+
+
+# MCPcounter
+im_mcpcounter <- deconvo_tme(eset = exp,
+                             method = "mcpcounter"
+)
+View(im_mcpcounter)
+# EPIC
+im_epic <- deconvo_tme(eset = exp,
+                       method = "epic",
+                       arrays = F)
+
+save(im_epic,file = "pancancer_epic.Rdata")
+
+# xCell
+im_xcell <- deconvo_tme(eset = exp,
+                        method = "xcell",
+                        arrays = F
+)
+# CIBERSORT
+im_cibersort <- deconvo_tme(eset = exp,
+                            method = "cibersort",
+                            arrays = F,
+                            perm = 1000
+)
+# IPS
+im_ips <- deconvo_tme(eset = exp,
+                      method = "ips",
+                      plot = F
+)
+# quanTIseq
+im_quantiseq <- deconvo_tme(eset = exp,
+                            method = "quantiseq",
+                            scale_mrna = T
+)
+
+# ESTIMATE
+im_estimate <- deconvo_tme(eset = exp,
+                           method = "estimate"
+)
+save(im_estimate,file = "pancancer_estimate.Rdata")
+# TIMER
+#im_timer <- deconvo_tme(eset = expr_pancancr
+                        #,method = "timer"
+                        #,group_list = rep("LIHC",dim(expr_LIHC)[2])
+
+#)
+
+library(xCell)
+scores <-  rawEnrichmentAnalysis(expr_pancancr, 
+                                 signatures = xCell.data$signatures,
+                                 genes = xCell.data$genes, 
+                                 parallel.sz = 4,
+                                 parallel.type = "SOCK")
+
+head(scores[1:6,1:4])
+
+head(xCell.data$spill$fv[1:6,])
+
+tscores <-  transformScores(scores,
+                            fit.vals = xCell.data$spill$fv,
+                            scale = T)
+head(tscores[1:6,1:4])
+head(xCell.data$spill$K[1:6,1:6])
+tscores <- spillLIHCer(tscores,K = xCell.data$spill$K, alpha = 0.5)
+head(tscores[1:6,1:3])
+
+
+row.names(im_xcell)<-im_xcell[,1]
+mRNA_filtered<-mRNA_filtered[,-1]
+mRNA_filtered[1:5,1:5]
+
+im_xcell[1:5,1:5]
+
+#保存
+save(im_xcell,file = "pancancer_xcell.Rdata")
+load("E:/R/tcga/pan-cancer/pancancer_drawdata.Rdata")
+#合并
+immunedata<-dplyr::inner_join(drawdata,im_xcell,by ="ID",copy=T)
+View(immunedata)
+
+
+
+library(dplyr)
+library(survival)
+library(survminer)
+library(survival)
+# 筛选 KIRP 癌症类型的数据
+KIRP <- filter(OSdata, Cancer == 'KIRP' & time <= 2400)
+
+df <- KIRP
+
+df$BCL9 <- as.numeric(as.character(df$BCL9))
+df$BCL9 <- as.numeric(as.character(df$BCL9))
+res.cut <- surv_cutpoint(df, time = "time", event = "status", minprop = 0.3,variables = c("BCL9"))
+
+
+
+plot(res.cut, "BCL9", palette = c("#cc3366", "#006699"))
+
+
+res.cat <- surv_categorize(res.cut)
+head(res.cat)
+#time status Th1_Th2
+#1 2015      0    high
+#2 2301      0     low
+#3 2301      0     low
+#4  359      0     low
+#5  468      0    high
+#6  303      1     low
+fit <- survfit(Surv(time, status) ~ BCL9, data = res.cat)
+ggsurvplot(fit, data = res.cat, risk.table = T, conf.int = F, pval = T,palette = c("#cc3366", "#006699"), title = "KIRP")
+
+p <- ggsurvplot(fit, data = res.cat, risk.table = T, conf.int = F, pval = T,palette = c("#cc3366", "#006699"), title = "KIRP")
+# 保存为PDF格式
+ggsave("BCL9_suv_KIRP.pdf", plot = p$plot, device = "pdf", width = 5, height = 4)
+
+
+
+OSdata<-filter(immunedata,immunedata$Type == 'Tumor' )
+
+LIHC<-filter(OSdata, Cancer == 'LIHC')
+
+
+#colnames(LIHC) <- gsub(" ", "_", colnames(LIHC))
+
+#data <- OSdata
+data <- LIHC
+colnames(data)[(ncol(data) - 65):ncol(data)]
+colnames(data) <- gsub(" ", "_", colnames(data))
+library(dplyr)
+library(ggplot2)
+data <- data %>%
+  mutate(
+    BCL9_Group = case_when(
+      BCL9 <= quantile(BCL9, 0.25, na.rm = TRUE) ~ "Low",  #BCL9 表达最低的 25%
+      BCL9 >= quantile(BCL9, 0.75, na.rm = TRUE) ~ "High"  #BCL9 表达最高的 25%
+    )
+  ) %>%
+  filter(!is.na(BCL9_Group)) # 过滤掉中间 50% 的样本
+immune_cells <- c(
+  "CD4+_T-cells_xCell", 
+  "Th1_cells_xCell", 
+  "Th2_cells_xCell", 
+  "Tregs_xCell",
+  "CD4+_memory_T-cells_xCell", 
+  "CD4+_naive_T-cells_xCell",
+  "CD4+_Tcm_xCell",
+  "CD4+_Tem_xCell"
+)
+immune_summary <- data %>%
+  group_by(BCL9_Group) %>%
+  summarise(across(all_of(immune_cells), 
+                   list(mean = ~mean(. , na.rm = TRUE),
+                        sem = ~sd(.) / sqrt(length(.))  # 计算标准误差（SEM）
+                   ), .names = "{col}_{fn}")) %>%
+  pivot_longer(cols = -BCL9_Group, 
+               names_to = c("Immune_Cell", ".value"), 
+               names_pattern = "(.*)_(.*)") %>%
+  rename(Mean_Infiltration = mean, SEM = sem)
+print(immune_summary)
+
+p <- ggplot(immune_summary, aes(x = Immune_Cell, y = Mean_Infiltration, fill = BCL9_Group)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  geom_errorbar(aes(ymin = Mean_Infiltration - SEM, ymax = Mean_Infiltration + SEM), 
+                position = position_dodge(width = 0.7), 
+                width = 0.25) +
+  theme_minimal() +
+  labs(
+    title = "Immune Cell Infiltration by BCL9 Expression Groups",
+    x = "Immune Cell Type",
+    y = "Mean Infiltration ± SEM",
+    fill = "BCL9 Group"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, family = "Arial", size = 14, color = "black"),
+    axis.text.y = element_text(family = "Arial", size = 14, color = "black"),
+    axis.title.x = element_text(family = "Arial", size = 14, color = "black"),
+    axis.title.y = element_text(family = "Arial", size = 14, color = "black"),
+    plot.title = element_text(family = "Arial", size = 14, color = "black", hjust = 0.5),
+    legend.title = element_text(family = "Arial", size = 14, color = "black"),
+    legend.text = element_text(family = "Arial", size = 14, color = "black"),
+    panel.grid = element_blank(),               # 去掉背景网格
+    axis.line = element_line(color = "black"),  # 添加坐标轴黑线
+    panel.border = element_blank()              # 去掉边框线
+  )
+
+ggsave("Immune_Cell_InfiltrationBCL9L-LIHC-bar.pdf", plot = p, width = 8, height = 6)
+
+library(dplyr)
+data <- data %>%
+  mutate(
+    BCL9_Group = case_when(
+      BCL9 <= quantile(BCL9, 0.25, na.rm = TRUE) ~ "Low",  # BCL9 表达最低的 25%
+      BCL9 >= quantile(BCL9, 0.75, na.rm = TRUE) ~ "High"  # BCL9 表达最高的 25%
+    )
+  ) %>%
+  filter(!is.na(BCL9_Group)) # 过滤掉中间 50% 的样本
+immune_cells <- c(
+  "CD4+_T-cells_xCell", 
+  "Th1_cells_xCell", 
+  "Th2_cells_xCell", 
+  "Tregs_xCell",
+  "CD4+_memory_T-cells_xCell", 
+  "CD4+_naive_T-cells_xCell",
+  "CD4+_Tcm_xCell",
+  "CD4+_Tem_xCell"
+)
+t_test_results <- sapply(immune_cells, function(cell) {
+  low_group <- data %>% filter(BCL9_Group == "Low") %>% pull(cell)
+  high_group <- data %>% filter(BCL9_Group == "High") %>% pull(cell)
+  
+  t_test <- t.test(low_group, high_group)
+  
+  return(t_test$p.value)
+})
+t_test_results_df <- data.frame(
+  Immune_Cell = immune_cells,
+  TTest_p_value = t_test_results
+)
+print(t_test_results_df)
+
+
+
+
+
+
+
+
+
+
+
+
